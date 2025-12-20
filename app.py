@@ -3,7 +3,9 @@ warnings.filterwarnings("ignore")
 
 from io import BytesIO
 from dataclasses import dataclass
+from typing import Optional, List, Tuple
 import time
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -24,6 +26,14 @@ st.set_page_config(
     layout="wide",
 )
 
+# Compatible rerun helper (Streamlit versions differ)
+def _rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
+
 # =========================
 # Data loader config
 # =========================
@@ -42,7 +52,7 @@ st.markdown(
     """
     <style>
     .boom {
-      font-size: 48px;
+      font-size: 52px;
       font-weight: 900;
       letter-spacing: 1px;
     }
@@ -74,6 +84,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
 # =========================
 # Helpers
 # =========================
@@ -81,20 +92,21 @@ def rmse(y_true, y_pred) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 def mae(y_true, y_pred) -> float:
-    return float(mean_absolute_error(y_true, y_pred)))
+    # ✅ FIXED: removed the extra ')'
+    return float(mean_absolute_error(y_true, y_pred))
 
 def plot_line(df: pd.DataFrame, title: str, height: int = 360):
     fig = go.Figure()
     for c in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df[c], mode="lines", name=c))
     fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 def plot_series(series: pd.Series, title: str, height: int = 360):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=series.index, y=series.values, mode="lines", name=series.name))
     fig.update_layout(title=title, height=height, margin=dict(l=10, r=10, t=40, b=10))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 def compute_log_returns(price_df: pd.DataFrame, col: str) -> pd.Series:
     logp = np.log(price_df[col].astype(float))
@@ -128,12 +140,12 @@ def make_demo():
 
 
 # =========================
-# Game state
+# Game settings
 # =========================
 TOTAL_LEVELS = 5
 
 LEVEL_TIME_LIMITS = {
-    1: 45,  # seconds
+    1: 45,
     2: 60,
     3: 75,
     4: 60,
@@ -144,6 +156,10 @@ START_GOLD = 300
 HINT_COST_GOLD = 40
 WRONG_COST_GOLD = 60
 
+
+# =========================
+# Game state
+# =========================
 def reset_game():
     st.session_state.level = 1
     st.session_state.lives = 3
@@ -156,8 +172,7 @@ def reset_game():
     st.session_state.level_start = time.time()
     st.session_state.game_over = False
     st.session_state.defused = False
-    st.session_state.last_boom = False
-    st.session_state.story = "🧙‍♀️ The Witch of Volatility stole your gold and armed a bomb in the market. Answer correctly to defuse it."
+    st.session_state.story = "🧙‍♀️ The Witch of Volatility stole your gold and armed a bomb in the market. Defuse it with econometrics."
 
 if "level" not in st.session_state:
     reset_game()
@@ -185,7 +200,6 @@ def header_ui():
     st.progress(min(st.session_state.level, TOTAL_LEVELS) / TOTAL_LEVELS)
 
 def big_boom(message: str):
-    st.session_state.last_boom = True
     st.session_state.lives -= 1
     st.session_state.gold -= WRONG_COST_GOLD
     st.session_state.wrong += 1
@@ -196,7 +210,7 @@ def big_boom(message: str):
     st.error(message)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # A bit of drama
+    # Drama effects
     try:
         st.snow()
     except Exception:
@@ -206,7 +220,6 @@ def big_boom(message: str):
         st.session_state.game_over = True
 
 def correct_msg(message: str):
-    st.session_state.last_boom = False
     st.session_state.correct += 1
     st.session_state.score += 200
     st.success(message)
@@ -229,18 +242,13 @@ def goto_next_level():
         st.session_state.defused = True
 
 def timer_check_or_fail():
-    # Soft timer: checks on every rerun (interactions). If time ran out, you lose.
     if st.session_state.defused or st.session_state.game_over:
         return
-    rem = time_remaining(st.session_state.level)
-    if rem <= 0:
+    if time_remaining(st.session_state.level) <= 0:
         big_boom("⏰ Time’s up! The witch triggered the bomb because you hesitated.")
-        # restart level timer so user can try again if still alive
         start_level_timer(st.session_state.level)
 
-
-def shuffled_options(options):
-    # options = list[(label, is_correct, explainer_if_correct, explainer_if_wrong)]
+def shuffled_options(options: List[Tuple[str, bool, str, str]]):
     opts = options[:]
     np.random.shuffle(opts)
     return opts
@@ -277,6 +285,7 @@ st.sidebar.divider()
 st.sidebar.header("🎮 Control")
 if st.sidebar.button("Reset game", type="secondary"):
     reset_game()
+    _rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🐉 Lore")
@@ -306,6 +315,7 @@ prices = common[["SPX", "NKY"]]
 spx_ret = compute_log_returns(prices, "SPX")
 nky_ret = compute_log_returns(prices, "NKY")
 rets = pd.concat([spx_ret, nky_ret], axis=1).dropna()
+
 
 # =========================
 # Precompute models (used by levels)
@@ -343,7 +353,6 @@ if arima_ok:
     bench_mae = mae(test, bench)
 else:
     train = test = fcst = None
-    arima_res = None
     arima_rmse = arima_mae = np.nan
     bench_rmse = bench_mae = np.nan
 
@@ -357,24 +366,24 @@ beta1 = float(gres.params.get("beta[1]", np.nan))
 persist = alpha1 + beta1
 cond_vol = (gres.conditional_volatility / 100.0).rename("Conditional Volatility")
 
+
 # =========================
 # Main UI
 # =========================
 header_ui()
 timer_check_or_fail()
 
-# Data preview panel
 with st.expander("📊 Data preview (SPX & Nikkei)", expanded=False):
     c1, c2 = st.columns(2)
     with c1:
         plot_line(prices, "Weekly Prices", height=280)
     with c2:
         plot_line(rets, "Weekly Log Returns", height=280)
-    st.dataframe(pd.concat([prices, rets], axis=1).dropna().tail(12), width="stretch")
+    st.dataframe(pd.concat([prices, rets], axis=1).dropna().tail(12), use_container_width=True)
 
 st.divider()
 
-# If game over
+# Game over
 if st.session_state.game_over:
     st.error("💀 Game Over. You ran out of lives or gold.")
     st.markdown("### 🧾 Final Scoreboard")
@@ -389,10 +398,10 @@ if st.session_state.game_over:
     st.write(f"- Score: **{st.session_state.score}**")
     if st.button("Try again"):
         reset_game()
-        st.experimental_rerun()
+        _rerun()
     st.stop()
 
-# If defused
+# Defused
 if st.session_state.defused:
     st.success("✅ Bomb Defused! You beat the Witch of Volatility.")
     st.balloons()
@@ -408,10 +417,10 @@ if st.session_state.defused:
     st.write(f"- Final Score: **{st.session_state.score}**")
 
     st.markdown("### 🧠 Key Findings (auto)")
-    st.write("- We model **returns** rather than prices to avoid non-stationarity issues.")
+    st.write("- We model **returns** rather than prices to reduce non-stationarity issues.")
     st.write(f"- OLS: β = {beta:.4f}, p = {beta_p:.4g} → " + ("evidence of relationship/spillover." if beta_p < 0.05 else "no strong evidence at 5%."))
     if arima_ok:
-        st.write(f"- ARIMA({p},{d},{q}) forecast: RMSE={arima_rmse:.6f} vs benchmark RMSE={bench_rmse:.6f} → " +
+        st.write(f"- ARIMA({p},{d},{q}): RMSE={arima_rmse:.6f} vs benchmark RMSE={bench_rmse:.6f} → " +
                  ("ARIMA improves slightly." if arima_rmse < bench_rmse else "predictability is weak (benchmark similar)."))
     st.write(f"- GARCH: α+β = {persist:.4f} → " + ("high volatility persistence." if persist >= 0.95 else "moderate persistence."))
 
@@ -422,16 +431,14 @@ if st.session_state.defused:
 
     if st.button("Play again"):
         reset_game()
-        st.experimental_rerun()
+        _rerun()
     st.stop()
 
 
 # =========================
-# LEVELS
+# Level initialization
 # =========================
 level = st.session_state.level
-
-# (Re)start timer if entering level first time in session
 if "level_initialized" not in st.session_state:
     st.session_state.level_initialized = level
     start_level_timer(level)
@@ -439,12 +446,20 @@ elif st.session_state.level_initialized != level:
     st.session_state.level_initialized = level
     start_level_timer(level)
 
-# Helper to render Q with shuffled buttons + optional hint
-def render_question(title: str, question: str, options, hint_text: str | None = None, explain_box: str | None = None):
+
+# =========================
+# Question renderer (no “✅” on buttons + shuffle)
+# =========================
+def render_question(
+    title: str,
+    question: str,
+    options: List[Tuple[str, bool, str, str]],
+    hint_text: Optional[str] = None,
+    explain_box: Optional[str] = None,
+):
     st.subheader(title)
     st.write(question)
 
-    # Hint button
     if hint_text:
         hcol1, hcol2 = st.columns([1, 4])
         with hcol1:
@@ -456,33 +471,36 @@ def render_question(title: str, question: str, options, hint_text: str | None = 
     opts = shuffled_options(options)
     c1, c2 = st.columns(2)
     cols = [c1, c2]
+
     for i, (label, is_correct, ok_msg, bad_msg) in enumerate(opts):
         with cols[i % 2]:
             if st.button(label, use_container_width=True):
                 if is_correct:
                     correct_msg(ok_msg)
                     goto_next_level()
-                    st.experimental_rerun()
+                    _rerun()
                 else:
                     big_boom(bad_msg)
-                    st.experimental_rerun()
+                    _rerun()
 
     if explain_box:
         with st.expander("Why this matters (Econometrics)", expanded=False):
             st.write(explain_box)
 
-    st.caption("⏳ Timer is enforced when you interact (soft timer). If you wait too long, the witch triggers the bomb.")
+    st.caption("⏳ Timer is enforced on interactions (soft timer). If you wait too long, the witch triggers the bomb.")
 
 
-# LEVEL 1 — Stationarity decision
+# =========================
+# LEVELS
+# =========================
 if level == 1:
-    st.session_state.story = "🧙‍♀️ The Witch of Volatility: 'Choose wisely… stationarity decides your fate.'"
+    st.session_state.story = "🧙‍♀️ The Witch: 'Stationarity decides your fate… choose wisely.'"
     render_question(
         "💣 Level 1 — Stationarity Decision",
         "You see price levels and returns. What should we model for standard financial econometrics?",
         options=[
             ("Model PRICES", False,
-             "Nice (but… actually this would be wrong).",  # not used
+             "—",
              "Prices are often non-stationary → risk of spurious regression."),
             ("Model RETURNS", True,
              "Correct. Returns are typically closer to stationary and suitable for inference.",
@@ -492,7 +510,6 @@ if level == 1:
         explain_box="In many financial applications, price levels behave like random walks (non-stationary). Using returns helps stabilize the mean/variance and supports valid inference in OLS/ARIMA/GARCH."
     )
 
-# LEVEL 2 — OLS spillover
 elif level == 2:
     st.session_state.story = "🐉 A Dragon Banker appears: 'Prove spillover… or pay in gold.'"
     m1, m2, m3 = st.columns(3)
@@ -505,14 +522,13 @@ elif level == 2:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=rets.index, y=resid, mode="lines", name="Residuals"))
         fig.update_layout(title="OLS residuals over time", height=280, margin=dict(l=10, r=10, t=40, b=10))
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
-    # Determine correct answer based on p-value
     is_spillover = bool(np.isfinite(beta_p) and beta_p < 0.05)
 
     render_question(
         "💣 Level 2 — OLS Spillover Test",
-        "Question: Based on the regression, is there evidence that Nikkei returns help explain SPX returns?",
+        "Based on the regression output, is there evidence that Nikkei returns help explain SPX returns?",
         options=[
             ("YES — β is statistically significant", is_spillover,
              "Correct. We reject H0: β = 0 at 5% → evidence of relationship/spillover.",
@@ -525,9 +541,8 @@ elif level == 2:
         explain_box="OLS tests whether the slope coefficient is statistically different from zero. A small p-value provides evidence against the null hypothesis of no relationship."
     )
 
-# LEVEL 3 — ARIMA forecast & benchmark
 elif level == 3:
-    st.session_state.story = "🧙‍♀️ Witch whispers: 'Can you truly forecast returns… or is it illusion?'"
+    st.session_state.story = "🧙‍♀️ Witch whispers: 'Can you forecast returns… or is it illusion?'"
 
     if not arima_ok:
         st.warning("Not enough observations for chosen horizon. Reduce horizon or upload more data.")
@@ -543,17 +558,21 @@ elif level == 3:
     fig.add_trace(go.Scatter(x=train.index, y=train, mode="lines", name="Train"))
     fig.add_trace(go.Scatter(x=test.index, y=test, mode="lines", name="Test"))
     fig.add_trace(go.Scatter(x=fcst.index, y=fcst, mode="lines", name="ARIMA forecast"))
-    fig.add_trace(go.Scatter(x=test.index, y=np.repeat(train.mean(), len(test)),
-                             mode="lines", name="Benchmark (train mean)", line=dict(dash="dot")))
+    fig.add_trace(go.Scatter(
+        x=test.index,
+        y=np.repeat(train.mean(), len(test)),
+        mode="lines",
+        name="Benchmark (train mean)",
+        line=dict(dash="dot")
+    ))
     fig.update_layout(title="Out-of-sample forecast on SPX returns", height=320, margin=dict(l=10, r=10, t=40, b=10))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Define "strong predictability" only if ARIMA beats benchmark meaningfully
     strong = bool(arima_rmse < 0.9 * bench_rmse)
 
     render_question(
         "💣 Level 3 — ARIMA Reality Check",
-        "Question: Based on ARIMA vs benchmark performance, is return predictability strong here?",
+        "Based on ARIMA vs benchmark performance, is return predictability strong here?",
         options=[
             ("YES — predictability looks strong", strong,
              "Correct. ARIMA meaningfully improves over benchmark → evidence of some predictability (in this setup).",
@@ -566,7 +585,6 @@ elif level == 3:
         explain_box="Forecasting is used for model evaluation. For many financial returns, mean predictability is limited, so simple benchmarks can be competitive."
     )
 
-# LEVEL 4 — GARCH persistence
 elif level == 4:
     st.session_state.story = "🐉 Dragon roars: 'Explain volatility… or the gold is mine!'"
 
@@ -582,7 +600,7 @@ elif level == 4:
 
     render_question(
         "💣 Level 4 — GARCH Volatility Persistence",
-        "Question: What does α + β close to 1 imply?",
+        "What does α + β close to 1 imply?",
         options=[
             ("Volatility is highly persistent", high_persist,
              "Correct. α+β near 1 indicates very persistent volatility (IGARCH-like behavior).",
@@ -592,21 +610,13 @@ elif level == 4:
              "Incorrect. With α+β near 1, volatility persistence is high."),
         ],
         hint_text="In GARCH(1,1), α+β measures persistence. Values near 1 imply shocks decay very slowly.",
-        explain_box="A near-unit persistence (α+β≈1) implies long memory in volatility: conditional variance responds to shocks and reverts very slowly. With weekly data, volatility can look smooth/flat when persistence is high."
+        explain_box="A near-unit persistence (α+β≈1) implies long memory in volatility: conditional variance reverts very slowly. With weekly data, volatility can look smooth/flat when persistence is high."
     )
 
-# LEVEL 5 — Final boss (integrated conclusion)
 elif level == 5:
     st.session_state.story = "🧙‍♀️ FINAL BOSS: 'Choose the correct takeaway… or BOOM.'"
 
-    # Derive integrated statements
-    spill = (beta_p < 0.05) if np.isfinite(beta_p) else False
-    weak_pred = (not (arima_ok and (arima_rmse < 0.9 * bench_rmse)))
-    vol_persist = (persist >= 0.95)
-
-    correct_takeaway = (
-        "Returns are hard to predict, but volatility is persistent; OLS tests association (not causality)."
-    )
+    correct_takeaway = "Returns are hard to predict, but volatility is persistent; OLS tests association (not causality)."
 
     render_question(
         "💣 Level 5 — Final Boss: Choose the takeaway",
@@ -620,9 +630,9 @@ elif level == 5:
             ("Because ARIMA forecasts the future, this app is a trading system.", False,
              "—", "This project focuses on model evaluation and interpretation, not trading claims."),
         ],
-        hint_text="Avoid overclaiming: OLS ≠ causality, ARIMA forecasts are for evaluation, and volatility persistence is common.",
-        explain_box="A strong project takeaway is cautious and econometrically valid: OLS indicates association, ARIMA often shows weak predictability in returns, and GARCH highlights volatility dynamics."
+        hint_text="Avoid overclaiming: OLS ≠ causality, ARIMA forecasts are for evaluation, volatility persistence is common.",
+        explain_box="A strong takeaway is cautious and econometrically valid: OLS indicates association, ARIMA often shows weak predictability, and GARCH highlights volatility dynamics."
     )
 
 st.divider()
-st.caption("🎓 Built for Econometrics: hypothesis testing (OLS), forecast evaluation (ARIMA), and volatility dynamics (GARCH) — now as a game.")
+st.caption("🎓 Built for Econometrics: hypothesis testing (OLS), forecast evaluation (ARIMA), volatility dynamics (GARCH) — now as a game.")
