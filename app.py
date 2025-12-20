@@ -1,3 +1,4 @@
+import streamlit as st
 st.markdown("### 🧩 Bomb Defusal Scene")
 
 col1, col2, col3 = st.columns([1, 1, 1])
